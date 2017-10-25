@@ -2148,10 +2148,35 @@ fail:
 #endif /* CONFIG_ACS */
 
 #define ESN_PARTITION_OFFSET 15728640 /* 15 MB into boot partition */
+#define ESN_PARTITION_OFFSET2 1572864 /* 1.5 MB into boot partition */
 static int esn_read(uint64_t *serial) {
         int fd = 0;
         int rv = 0;
         off_t fptr = 0;
+	char partsize[32] = {0};
+	int offset = 0;
+
+	fd = open("/sys/block/mmcblk0boot0/size", O_RDONLY);
+	if (fd == -1) {
+		fd = open("/sys/block/mmcblk1boot0/size", O_RDONLY);
+		if (fd == -1) {
+			return -1;
+		}
+	}
+
+	rv = read(fd, (char *)partsize, sizeof(partsize));
+	if (rv <= 0) {
+		close(fd);
+		return -1;
+	}
+
+	if (atoi(partsize) >= 32768) {
+		offset = ESN_PARTITION_OFFSET;
+	} else {
+		offset = ESN_PARTITION_OFFSET2;
+	}
+
+	close(fd);
 
         fd = open("/dev/mmcblk0boot0", O_RDONLY);
 	if (fd == -1) {
@@ -2161,7 +2186,7 @@ static int esn_read(uint64_t *serial) {
 		}
 	}
 
-	fptr = lseek(fd, ESN_PARTITION_OFFSET, SEEK_SET);
+	fptr = lseek(fd, offset, SEEK_SET);
 	if (fptr == -1) {
 		close(fd);
 		return -1;
