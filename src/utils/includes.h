@@ -37,6 +37,10 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <stdint.h>
+#include <inttypes.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 #ifndef __vxworks
 #include <sys/uio.h>
 #include <sys/time.h>
