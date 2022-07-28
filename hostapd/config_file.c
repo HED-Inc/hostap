@@ -2071,6 +2071,35 @@ fail:
 }
 #endif /* CONFIG_ACS */
 
+#define ESN_PARTITION_OFFSET 15728640 /* 15 MB into boot partition */
+static int esn_read(uint64_t *serial) {
+        int fd = 0;
+        int rv = 0;
+        off_t fptr = 0;
+
+        fd = open("/dev/mmcblk0boot0", O_RDONLY);
+	if (fd == -1) {
+		fd = open("/dev/mmcblk1boot0", O_RDONLY);
+		if (fd == -1) {
+			return -1;
+		}
+	}
+
+	fptr = lseek(fd, ESN_PARTITION_OFFSET, SEEK_SET);
+	if (fptr == -1) {
+		close(fd);
+		return -1;
+	}
+
+	rv = read(fd, serial, sizeof(uint64_t));
+	if (rv <= 0) {
+		close(fd);
+		return -1;
+	}
+	close(fd);
+
+	return 0;
+}
 
 static int parse_wpabuf_hex(int line, const char *name, struct wpabuf **buf,
 			    const char *val)
@@ -2399,13 +2428,49 @@ static int hostapd_config_fill(struct hostapd_config *conf,
 	} else if (os_strcmp(buf, "ssid") == 0) {
 		struct hostapd_ssid *ssid = &bss->ssid;
 
-		ssid->ssid_len = os_strlen(pos);
-		if (ssid->ssid_len > SSID_MAX_LEN || ssid->ssid_len < 1) {
-			wpa_printf(MSG_ERROR, "Line %d: invalid SSID '%s'",
-				   line, pos);
-			return 1;
+		char buf[32] = {0};
+		char * sn_start;
+		uint64_t serial = 0;
+		if (sn_start = os_strstr(pos, "\%S")) {
+			/* SSID can only be 32 characters including terminating character at end */
+			/* The ESN is 11 characters and %S is 2, so strlen(pos) + (11 - 2) < 32 */
+			if ((os_strlen(pos) + 9) >= 32) {
+				wpa_printf(MSG_ERROR, "Line %d: SSID too long after adding ESN in place of \%S",
+					   line);
+				return 1;
+			}
+
+			/* Based on http://www.linuxquestions.org/questions/programming-9/replace-a-substring-with-another-string-in-c-170076/#post877511 */
+			os_strlcpy(buf, pos, sn_start - pos + 1);
+			buf[sn_start - pos] = '\0';
+
+			if (esn_read(&serial) == -1) {
+				wpa_printf(MSG_ERROR, "Line %d: Failed to obtain ESN for SSID",
+					   line);
+				return 1;
+			}
+
+			os_snprintf(buf + (sn_start - pos), 31, "%"PRIu64"%s",
+				    serial, sn_start + os_strlen("\%S"));
+			bss->ssid.ssid_len = os_strlen(buf);
+			if (bss->ssid.ssid_len > SSID_MAX_LEN ||
+			    bss->ssid.ssid_len < 1) {
+				wpa_printf(MSG_ERROR, "Line %d: invalid SSID '%s'",
+					   line, buf);
+				return 1;
+			}
+			os_memcpy(bss->ssid.ssid, buf, bss->ssid.ssid_len);
+		} else {
+			bss->ssid.ssid_len = os_strlen(pos);
+			if (bss->ssid.ssid_len > SSID_MAX_LEN ||
+			    bss->ssid.ssid_len < 1) {
+				wpa_printf(MSG_ERROR, "Line %d: invalid SSID '%s'",
+					   line, pos);
+				return 1;
+			}
+			os_memcpy(bss->ssid.ssid, pos, bss->ssid.ssid_len);
 		}
-		os_memcpy(ssid->ssid, pos, ssid->ssid_len);
+
 		ssid->ssid_set = 1;
 		ssid->short_ssid = crc32(ssid->ssid, ssid->ssid_len);
 	} else if (os_strcmp(buf, "ssid2") == 0) {
